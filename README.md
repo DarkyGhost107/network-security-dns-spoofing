@@ -1,154 +1,153 @@
-# DNS Spoofing / DNS Poisoning Tool - Matricula: 2023-0316 | ITLA
+# DNS Spoofing Tool — Matricula: 2023-0316 | ITLA
 
 ## Objetivo del Laboratorio
-Demostrar el ataque de **DNS Spoofing** interceptando consultas DNS y respondiendo con registros falsos.
+Demostrar **DNS Spoofing / DNS Cache Poisoning** interceptando consultas DNS y respondiendo con IP falsa `20.23.3.16` para que `itla.edu.do` apunte al servidor web del atacante.
 
-**Objetivo especifico:** Hacer que itla.edu.do apunte a un servidor web local (20.23.3.16) en lugar del servidor real.
+---
 
-> Solo para uso educativo en entornos de laboratorio controlados.
+## Topologia (comun a los 3 ataques)
+
+```
+Internet / DNS Real (8.8.8.8)
+      |
+Router  Fa0/0: 20.23.3.1 (GW)
+        Fa0/1 -> SW-L2
+      |
+SW-L2   Gig0/0: router
+        Gig0/1: Kali Linux   20.23.3.16  [ATACANTE + Web falso]
+        Gig0/2: PC-Victima   20.23.3.50  [consulta itla.edu.do]
+        Gig0/3: PC-Extra     20.23.3.65
+```
+
+### Tabla de interfaces
+
+| Dispositivo | Puerto | Conectado a | IP |
+|---|---|---|---|
+| Router | Fa0/0 | Internet | 20.23.3.1 |
+| Router | Fa0/1 | SW-L2 Gig0/0 | — |
+| SW-L2 | Gig0/0 | Router Fa0/1 | — |
+| SW-L2 | Gig0/1 | Kali eth0 | — |
+| SW-L2 | Gig0/2 | PC-Victima | — |
+| SW-L2 | Gig0/3 | PC-Extra | — |
+| Kali | eth0 | SW-L2 Gig0/1 | 20.23.3.16 |
+| PC-Victima | eth0 | SW-L2 Gig0/2 | 20.23.3.50 |
+
+---
+
+## Objetivo del Script
+
+`dns_spoofing.py` hace sniff en eth0 (SW-L2 Gig0/1) interceptando queries UDP/53 de la victima (20.23.3.50) y responde con A falso apuntando a 20.23.3.16. Incluye servidor HTTP embebido que muestra pagina falsa de ITLA.
+
+**Flujo del ataque:**
+```
+[1] ARP Spoof: Kali envenena ARP de victima y GW -> MITM
+[2] Victima consulta: itla.edu.do? (UDP/53)
+    -> paquete pasa por Kali (Gig0/1)
+    -> Kali responde: itla.edu.do = 20.23.3.16 (FALSA)
+[3] Victima abre http://itla.edu.do
+    -> resuelve a 20.23.3.16 (Kali)
+    -> ve pagina web falsa del atacante
+```
+
+---
 
 ## Requisitos
-- Linux (Kali Linux recomendado)
-- Python 3.8+
-- pip install scapy
-- pip install netfilterqueue (modo nfqueue)
-- Privilegios root/sudo
-- Posicion MITM (usar ARP Spoofing previo)
 
-## Preparacion (ARP Spoofing para posicion MITM)
 ```bash
+Linux (Kali Linux)
+Python 3.8+
+pip install scapy
+sudo apt install dsniff   # para arpspoof
+sudo / root
+Kali conectada a SW-L2 Gig0/1
+Victima conectada a SW-L2 Gig0/2 (20.23.3.50)
+```
+
+---
+
+## Preparacion — ARP Spoof para MITM
+
+```bash
+# Habilitar reenvio
 echo 1 > /proc/sys/net/ipv4/ip_forward
+
+# Envenenar ARP victima (le dice que GW es Kali)
 sudo arpspoof -i eth0 -t 20.23.3.50 20.23.3.1 &
+
+# Envenenar ARP router (le dice que victima es Kali)
 sudo arpspoof -i eth0 -t 20.23.3.1 20.23.3.50 &
 ```
 
-## Uso
-```bash
-# Modo basico con servidor web falso
-sudo python3 dns_spoofing.py -i eth0 --web
-
-# Multiples dominios
-sudo python3 dns_spoofing.py -i eth0 --ip-falsa 20.23.3.16 -d itla.edu.do www.itla.edu.do --web
-
-# Modo NFQueue (requiere iptables configurado)
-sudo iptables -I FORWARD -p udp --dport 53 -j NFQUEUE --queue-num 0
-sudo python3 dns_spoofing.py -m nfqueue --ip-falsa 20.23.3.16 -d itla.edu.do --web
-```
+---
 
 ## Parametros
 
-| Parametro | Descripcion | Default |
+| Parametro | Default | Descripcion |
 |---|---|---|
-| -i / --interfaz | Interfaz de red | eth0 |
-| --ip-falsa | IP a devolver en respuestas DNS | 20.23.3.16 |
-| -d / --dominios | Dominios a envenenar | itla.edu.do |
-| -m / --modo | pasivo o nfqueue | pasivo |
-| --web | Iniciar servidor web falso (puerto 80) | False |
+| -i | eth0 | Interfaz (SW-L2 Gig0/1) |
+| --ip-falsa | 20.23.3.16 | IP falsa a responder |
+| -d | itla.edu.do | Dominios a envenenar |
+| --web | False | Servidor web falso pto 80 |
 
-## Topologia (Matricula: 2023-0316)
-```
-Red Base: 20.23.3.0/24
+---
 
-           DNS Real (8.8.8.8)
-                  |
-           GATEWAY (20.23.3.1)
-                  |
-        SWITCH L2 (20.23.3.0/24)
-           |              |
-    VICTIMA            ATACANTE
-    20.23.3.50         20.23.3.16
-    Windows            Kali Linux
-                       - ARP Spoof
-                       - DNS Spoof
-                       - Web Falso
+## Uso
 
-IP real itla.edu.do : (servidor legitimo)
-IP falsa configurada: 20.23.3.16
+```bash
+# Basico con servidor web falso
+sudo python3 dns_spoofing.py --web
+
+# Multiples dominios
+sudo python3 dns_spoofing.py \
+  -d itla.edu.do www.itla.edu.do \
+  --ip-falsa 20.23.3.16 --web
 ```
 
-## Funcionamiento del Script
+---
 
-### Flujo del Ataque
+## Configuracion Cisco
+
+### Router
 ```
-[1] Preparacion
-    Atacante ejecuta ARP Spoofing -> posicion MITM
-
-[2] DNS Spoofing
-    Victima -> [DNS Query: itla.edu.do?] -> (pasa por atacante)
-    Atacante -> intercepta UDP/53
-    Atacante -> envia [DNS Response: itla.edu.do = 20.23.3.16 FALSA]
-    Victima  <- recibe respuesta FALSA (antes que la real)
-
-[3] Redireccion HTTP
-    Victima -> HTTP GET itla.edu.do -> resuelve a 20.23.3.16
-    Victima -> conecta al servidor web falso del atacante
-    Victima <- recibe pagina web falsa
-
-[4] Resultado
-    El usuario ve una pagina falsa sin saber que fue redirigido
+hostname ROUTER
+interface FastEthernet0/0
+ ip address 20.23.3.1 255.255.255.240
+ no shutdown
+interface FastEthernet0/1
+ no ip address
+ no shutdown
+ip route 0.0.0.0 0.0.0.0 [IP-ISP]
 ```
 
-### Estructura de Respuesta DNS Falsa
+### SW-L2
 ```
-IP  (src=DNS_SERVER, dst=CLIENTE)
-  UDP (sport=53, dport=cliente_port)
-    DNS
-      id   = ID de la query original  <- CRITICO
-      qr   = 1 (es respuesta)
-      aa   = 1 (autoritativo)
-      an   = DNSRR(
-               rrname = itla.edu.do
-               type   = A
-               rdata  = 20.23.3.16  <- IP FALSA
-               ttl    = 300
-             )
+hostname SW-L2
+interface GigabitEthernet0/0
+ switchport mode access
+ no shutdown
+interface GigabitEthernet0/1
+ switchport mode access
+ no shutdown
+interface GigabitEthernet0/2
+ switchport mode access
+ no shutdown
+interface GigabitEthernet0/3
+ switchport mode access
+ no shutdown
 ```
+
+---
 
 ## Contramediadas
 
-### 1. DNSSEC (mas efectivo)
-```
-Firmas digitales en cada registro DNS.
-El cliente verifica la firma antes de aceptar.
-Verificar: dig +dnssec itla.edu.do
-```
-
-### 2. DNS sobre HTTPS (DoH) o TLS (DoT)
-```
-DoH: Consultas DNS encriptadas por HTTPS (puerto 443)
-DoT: Consultas DNS encriptadas por TLS (puerto 853)
-Usar: Cloudflare 1.1.1.1 o Google 8.8.8.8 con DoH/DoT
-```
-
-### 3. Proteccion ARP en el Switch (previene MITM)
-```
-ip arp inspection vlan 20
-ip dhcp snooping vlan 20
-```
-
-### 4. HSTS (HTTP Strict Transport Security)
-```
-El servidor web responde con:
-Strict-Transport-Security: max-age=31536000; includeSubDomains
-El navegador solo acepta HTTPS, haciendo el sitio falso HTTP rechazado.
-```
-
-### 5. SSL/TLS + HTTPS
-```
-Usar HTTPS en todos los sitios importantes.
-Certificados SSL son dominio-especificos.
-El sitio falso no tendra el certificado legitimo.
-El navegador mostrara advertencia de seguridad.
-```
-
-| Contramediada | Efectividad | Implementacion |
+| Medida | Descripcion | Efectividad |
 |---|---|---|
-| DNSSEC | Alta | Servidor DNS |
-| DoH / DoT | Alta | Cliente/OS |
-| HSTS | Alta | Servidor Web |
-| SSL/TLS + HTTPS | Alta | Servidor Web |
-| ARP Inspection | Media | Switch L2 |
-| DHCP Snooping | Media | Switch L2 |
+| DNSSEC | Firmas digitales en registros DNS | Alta |
+| DoH / DoT | DNS sobre HTTPS o TLS | Alta |
+| HTTPS + HSTS | Certificado SSL en servidor web | Alta |
+| ARP Inspection | ip arp inspection vlan X | Alta |
+| DHCP Snooping | ip dhcp snooping vlan X | Media |
+| Static ARP | Entradas ARP estaticas | Media |
 
 ---
 *Laboratorio academico | ITLA | Matricula: 2023-0316*
